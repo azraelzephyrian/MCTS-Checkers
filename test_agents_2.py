@@ -72,7 +72,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     net = CheckersNet(action_size=8**4)
     net.to(device)
-    net.load_state_dict(torch.load("latest_iteration.pth", map_location=device))
+    net.load_state_dict(torch.load("C:/Users/alexi/OneDrive/Desktop/my_code_projects/MCTS-Checkers/latest_iteration.pth", map_location=device))
     net.eval()
 
     naive_mcts = MCTS(c=1.4)
@@ -82,7 +82,7 @@ def main():
     nn_wins = 0
     draws = 0
 
-    for i in range(1000):
+    for i in range(100):
         print(f"Game {i + 1}:")
         result = play_game(nn_mcts, naive_mcts, verbose=False)
         
