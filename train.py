@@ -301,7 +301,7 @@ def main():
     num_iterations = 300
     games_per_iteration = 5
     mcts_simulations = 800
-    iteration_start = 50  # Default starting iteration
+    iteration_start = 0  # Default starting iteration
 
     # Check if CSV file exists and determine where to start
     csv_file = "training_metrics.csv"

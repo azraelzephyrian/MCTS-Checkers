@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Checkers vs NN</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+    #board {
+      display: grid;
+      grid-template-columns: repeat(8, 60px);
+      grid-template-rows: repeat(8, 60px);
+      gap: 0;
+      margin: 20px auto;
+      width: 480px;
+      border: 2px solid black;
+    }
+    .cell {
+      width: 60px;
+      height: 60px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 24px;
+      cursor: pointer;
+    }
+    .black-square {
+      background-color: #444;
+    }
+    .white-square {
+      background-color: #eee;
+    }
+    .selected {
+      outline: 3px solid yellow;
+    }
+    #status {
+      margin-top: 20px;
+    }
+    button {
+      margin-top: 10px;
+      padding: 8px 12px;
+    }
+    .legal-start {
+    outline: 2px solid limegreen;
+    }
+    .legal-end {
+    outline: 2px dashed gold;
+    }
+
+  </style>
+</head>
+<body>
+  <h1>Checkers vs Neural Network</h1>
+  <div id="board"></div>
+  <div id="status">Loading...</div>
+  <button onclick="startGame()">Restart Game</button>
+  <button onclick="highlightLegalMoves()">Show Legal Moves</button>
+
+
+  <script>
+    const boardEl = document.getElementById('board');
+    const statusEl = document.getElementById('status');
+    let selected = null;
+
+    const PIECES = {
+      0: '',
+      1: '⚪',     // black man
+      2: '♔',     // black king
+      '-1': '🔴', // red man
+      '-2': '🛑'  // red king
+    };
+
+    async function startGame() {
+      selected = null;
+      await fetch('/start', { method: 'POST' });
+      await renderBoard();
+      updateStatus();
+    }
+
+    async function renderBoard() {
+      const res = await fetch('/state');
+      const data = await res.json();
+      const board = data.board;
+
+      boardEl.innerHTML = '';
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const value = board[r][c];
+          const cell = document.createElement('div');
+          cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'black-square' : 'white-square');
+          cell.dataset.row = r;
+          cell.dataset.col = c;
+          cell.textContent = PIECES[value];
+          cell.onclick = () => handleCellClick(r, c);
+          boardEl.appendChild(cell);
+        }
+      }
+    }
+
+    async function handleCellClick(r, c) {
+        // Clear legal move highlights on new click
+        document.querySelectorAll('.cell').forEach(cell =>
+            cell.classList.remove('legal-start', 'legal-end')
+        );
+
+        if (!selected) {
+            selected = { r, c };
+            highlightCell(r, c);
+        } else {
+            const r1 = selected.r;
+            const c1 = selected.c;
+            const r2 = r;
+            const c2 = c;
+            selected = null;
+
+            const moveRes = await fetch('/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ start_row: r1, start_col: c1, end_row: r2, end_col: c2 })
+            });
+
+            const moveResult = await moveRes.json();
+            if (moveRes.ok && moveResult.success) {
+            await renderBoard();
+            await updateStatus();
+
+            // Disable clicks while NN is thinking
+            boardEl.style.pointerEvents = "none";
+
+            setTimeout(async () => {
+                await fetch('/nn-move', { method: 'POST' });
+                await renderBoard();
+                await updateStatus();
+
+                boardEl.style.pointerEvents = "auto";
+            }, 500);
+            } else {
+            alert(moveResult.error || "Invalid move. If a capture is available, you must complete it.");
+            await renderBoard();
+            }
+        }
+        }
+
+
+    function highlightCell(r, c) {
+      const cells = document.querySelectorAll('.cell');
+      cells.forEach(cell => cell.classList.remove('selected'));
+      const index = r * 8 + c;
+      cells[index].classList.add('selected');
+    }
+
+    async function updateStatus() {
+      const res = await fetch('/status');
+      const data = await res.json();
+      if (data.status === 'over') {
+        if (data.winner === 'user') statusEl.textContent = "You win!";
+        else if (data.winner === 'nn') statusEl.textContent = "NN wins!";
+        else statusEl.textContent = "It's a draw!";
+      } else {
+        statusEl.textContent = data.current_player === 1 ? "NN's turn" : "Your turn";
+      }
+    }
+    async function highlightLegalMoves() {
+        const res = await fetch('/legal');
+        const data = await res.json();
+        if (!res.ok || !data.legal_moves) {
+            alert(data.error || "Could not fetch legal moves.");
+            return;
+        }
+
+        // Clear old highlights
+        document.querySelectorAll('.cell').forEach(cell => {
+            cell.classList.remove('legal-start', 'legal-end');
+        });
+
+        const legalMoves = data.legal_moves;
+        const cells = document.querySelectorAll('.cell');
+
+        for (const [sr, sc, er, ec, captures] of legalMoves) {
+            const startIndex = sr * 8 + sc;
+            const endIndex = er * 8 + ec;
+
+            if (cells[startIndex]) cells[startIndex].classList.add('legal-start');
+            if (cells[endIndex]) cells[endIndex].classList.add('legal-end');
+        }
+    }
+
+
+    // Initial load
+    startGame();
+
+  </script>
+</body>
+</html>

@@ -161,25 +161,20 @@ class CheckersGame:
 
     def _find_captures(
         self,
-        r: int, 
-        c: int, 
+        r: int,
+        c: int,
         piece: int,
         captured_so_far: List[Tuple[int, int]],
         capture_sequences: List[Tuple[int, int, int, int, List[Tuple[int, int]]]],
-        directions: List[Tuple[int, int]]
+        directions: List[Tuple[int, int]],
+        origin: Optional[Tuple[int, int]] = None
     ):
-        """
-        Recursively find all capturing sequences (multi-jumps).
-        Each capturing sequence is stored in capture_sequences.
+        if origin is None:
+            origin = (r, c)
 
-        We track the path of intermediate states using a temporary board clone
-        so we don't permanently modify the main board while exploring.
-        """
         found_capture = False
 
         for dr, dc in directions:
-            # Opponent piece is presumably at (r+dr, c+dc)
-            # Landing square is (r+2*dr, c+2*dc)
             middle_r, middle_c = r + dr, c + dc
             landing_r, landing_c = r + 2*dr, c + 2*dc
 
@@ -190,56 +185,33 @@ class CheckersGame:
             land_piece = self.get_piece(landing_r, landing_c)
 
             if mid_piece != EMPTY and self.is_opponent(piece, mid_piece) and land_piece == EMPTY:
-                # We have a potential capture
                 found_capture = True
 
-                # Simulate this capture on a cloned board
+                # Simulate the capture
                 cloned_game = self.clone()
-                # Remove captured piece
                 cloned_game.set_piece(middle_r, middle_c, EMPTY)
-                # Move the piece
                 cloned_game.set_piece(landing_r, landing_c, piece)
                 cloned_game.set_piece(r, c, EMPTY)
-                
-                # Possibly king the piece if it reaches the far row
                 cloned_game._maybe_king(landing_r, landing_c)
 
-                new_captured = captured_so_far + [(middle_r, middle_c)]
+                new_captures = captured_so_far + [(middle_r, middle_c)]
+                next_piece = cloned_game.get_piece(landing_r, landing_c)
+                next_dirs = cloned_game._get_move_directions(next_piece)
 
-                # Continue searching for more captures from the new position
                 cloned_game._find_captures(
                     landing_r,
                     landing_c,
-                    cloned_game.get_piece(landing_r, landing_c),
-                    new_captured,
+                    next_piece,
+                    new_captures,
                     capture_sequences,
-                    directions if cloned_game.is_king(piece) else cloned_game._get_move_directions(piece)
+                    next_dirs,
+                    origin
                 )
 
-        # If we didn't find any further captures from this position, but we arrived here from a capture,
-        # then this is a final sequence in a multi-jump chain.
         if not found_capture and captured_so_far:
-            start_r, start_c = captured_so_far[0][0], captured_so_far[0][1]  # not exactly correct, need better reference
-            # Actually, for clarity, store entire chain differently. But for simplicity, we'll define:
-            # The move is from (r0, c0) to (r, c) after multi-jumps, capturing captured_so_far squares.
-            # Let's approximate that the first captured was from the original (r0, c0).
-            # We'll track the final landing at the current (r, c).
+            sr, sc = origin
+            capture_sequences.append((sr, sc, r, c, captured_so_far))
 
-            # In a real system, we might track the path. For demonstration, let's do this:
-            # We'll say the "start" is the first jump's origin (we can store it on function entry if needed).
-            # For now, let's store a single-segment capture. Real multi-jump tracking might store each jump.
-            # Simplify for demonstration:
-            pass
-
-        # If there's no additional capture from here and we are in a deeper recursion, we should record the final path.
-        # A simpler approach: track the capturing route within the same recursion. Let’s do that:
-
-        if not found_capture and len(captured_so_far) > 0:
-            # We need to figure out the actual start position. For that, let's do a small hack:
-            # The original piece's position was (r0, c0) before the first capture. We'll store that in captured_so_far as well.
-            # A robust approach is to pass the original start coords to the recursion. Let's do that:
-
-            return  # We handle a better approach below
 
     def _get_move_directions(self, piece: int) -> List[Tuple[int, int]]:
         """
@@ -387,3 +359,14 @@ class CheckersGame:
                     row_str.append(".")
             print(f"{r} " + " ".join(row_str))
         print()
+        
+    def get_board_state(self):
+        """
+        Returns the board as a 2D list of integers, where:
+        - 0 = empty
+        - 1 = black man
+        - 2 = black king
+        - -1 = red man
+        - -2 = red king
+        """
+        return [row[:] for row in self.board]
