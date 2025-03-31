@@ -4,7 +4,7 @@ import math
 import torch
 import torch.nn.functional as F
 from typing import Optional, Dict, Tuple, List
-from network_v1 import CheckersNet, encode_board, move_to_index, index_to_move
+from network_v3 import CheckersNet, encode_board, move_to_index, index_to_move
 
 # from game import CheckersGame     # Your checkers environment
 # from network import CheckersNet, encode_board, move_to_index, index_to_move

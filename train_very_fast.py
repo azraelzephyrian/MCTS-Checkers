@@ -13,93 +13,70 @@ from network_v3 import CheckersNet, encode_board, move_to_index, index_to_move
 from MCTS_NN import Node, MCTS_NN
 
 def self_play_game(net, mcts_simulations=30, temperature=1.0) -> List[Tuple[torch.Tensor, List[float], float]]:
-    """
-    Play a single game of checkers in self-play mode using MCTS guided by 'net'.
-    Return a list of training samples (board_tensor, pi, z).
-      - board_tensor: shape (4,8,8) representing the state
-      - pi: MCTS visit distribution over all possible moves (8^4 = 4096)
-      - z: final outcome from the perspective of the player who moved at that state
-    :param net: a CheckersNet instance
-    :param mcts_simulations: how many MCTS simulations per move
-    :param temperature: controls whether we sample from the MCTS distribution (1.0) or pick argmax (0.0)
-    """
     game_data = []
     game = CheckersGame()
     root_node = Node(state=game)
     mcts_solver = MCTS_NN(net=net, c_puct=1.0, action_size=8**4)
 
+    turn = 0  # Track the number of turns in the game
     while not game.is_game_over():
         # 1) Run MCTS from the current root node
         for _ in range(mcts_simulations):
             leaf = mcts_solver._select(root_node)
             if not leaf.state.is_game_over():
                 mcts_solver._expand(leaf)
-            # The leaf's value_est is used for backprop.
             mcts_solver._backpropagate(leaf, leaf.value_est)
 
         # 2) Build the MCTS visit distribution (pi)
-        visit_counts = [0]*(8**4)
+        visit_counts = [0] * (8**4)
         for move_key, child in root_node.children.items():
-            # move_key = (r1, c1, r2, c2, tuple_of_captures)
-            # convert back to a full 5-tuple with captures as list
             move_tuple = (move_key[0], move_key[1], move_key[2], move_key[3], list(move_key[4]))
             idx = move_to_index(move_tuple)
+            if idx < 0 or idx >= len(visit_counts):
+                continue
             visit_counts[idx] = child.visit_count
 
         total_visits = sum(visit_counts)
         if total_visits > 0:
             pi = [vc / total_visits for vc in visit_counts]
         else:
-            # terminal or no children
-            pi = [0]*(8**4)
+            pi = [0] * (8**4)
 
         # 3) Record (board_tensor, pi, current_player)
         board_tensor = encode_board(game)
-        current_player = game.current_player  # +1 for black, -1 for red
+        current_player = game.current_player
         game_data.append((board_tensor, pi, current_player))
 
         # 4) Select a move from pi
         if temperature > 0.0:
-            # sample from pi
             move_index = random.choices(range(8**4), weights=pi, k=1)[0]
         else:
-            # pick argmax
             move_index = max(range(8**4), key=lambda i: pi[i])
 
-        # check if no valid moves
         if pi[move_index] == 0:
             break
 
         # 5) Convert index to a move
         (r1, c1, r2, c2, captures) = index_to_move(move_index)
-
-        # Make the move in the real game
         game.make_move((r1, c1, r2, c2, captures))
 
-        # Move root to the child
         move_key = (r1, c1, r2, c2, tuple(captures))
         if move_key in root_node.children:
             root_node = root_node.children[move_key]
-            root_node.parent = None  # new root
+            root_node.parent = None
         else:
-            # forced to create a new root if something didn't match
             root_node = Node(state=game)
 
-    # final outcome
-    winner = game.get_winner()  # +1 for black, -1 for red, 0 for draw
+        turn += 1  # Increment turn counter
 
-    # 6) Assign outcomes from each player's perspective
+    winner = game.get_winner()
     final_samples = []
     for (board_tensor, pi, player) in game_data:
-        # if player is black, outcome = winner; if red, outcome = -winner
-        if player in (1,2):  # black side
-            z = float(winner)
-        else:
-            z = float(-winner)
+        z = float(winner) if player in (1, 2) else float(-winner)
         final_samples.append((board_tensor, pi, z))
 
+    print("Self-play game finished.")
     return final_samples
-
 
 def alpha_zero_train_step(net, optimizer, batch, reg_const=1e-4):
     """
@@ -226,7 +203,7 @@ def main():
         print("No replay buffer found. Starting fresh.")
         replay_buffer = deque(maxlen=REPLAY_BUFFER_MAX_SIZE)
 
-    num_iterations = 300
+    num_iterations = 2000
     games_per_iteration = 5
     mcts_simulations = 30
     iteration_start = 0  # Default starting iteration

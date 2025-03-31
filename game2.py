@@ -32,14 +32,16 @@ class CheckersGame:
         self.board = [[EMPTY for _ in range(8)] for _ in range(8)]
         self.current_player = BLACK_MAN  # Black moves first in many versions
         self.no_capture_count = 0
-
-        # Place 12 black pieces on "dark" squares (r + c even) in rows 0..2
+        
+        # Place 12 black pieces
+        # Rows 0..2 have black pieces (in standard US checkers, black on "dark" squares)
         for r in range(3):
             for c in range(8):
                 if (r + c) % 2 == 0:
                     self.board[r][c] = BLACK_MAN
-
-        # Place 12 red pieces on "dark" squares (r + c even) in rows 5..7
+        
+        # Place 12 red pieces
+        # Rows 5..7 have red pieces
         for r in range(5, 8):
             for c in range(8):
                 if (r + c) % 2 == 0:
@@ -54,7 +56,7 @@ class CheckersGame:
         new_game.current_player = self.current_player
         new_game.no_capture_count = self.no_capture_count
         return new_game
-
+    
     def in_bounds(self, r: int, c: int) -> bool:
         """Check if (r, c) is on the 8x8 board."""
         return 0 <= r < 8 and 0 <= c < 8
@@ -78,6 +80,7 @@ class CheckersGame:
 
     def is_opponent(self, piece1: int, piece2: int) -> bool:
         """Check if piece1 and piece2 belong to opposite sides."""
+        # piece1 * piece2 < 0 if they differ in sign
         return piece1 * piece2 < 0
 
     def get_current_player_sign(self) -> int:
@@ -105,16 +108,17 @@ class CheckersGame:
         for r in range(8):
             for c in range(8):
                 piece = self.get_piece(r, c)
-                # Make sure this piece belongs to the current player
-                if piece != EMPTY and ((sign > 0) == self.is_black_piece(piece)):
+                if piece != EMPTY and (sign > 0) == self.is_black_piece(piece):
+                    # Generate possible moves for this piece
                     piece_moves = self._get_piece_moves(r, c)
                     for move in piece_moves:
-                        if move[4]:  # there is at least one capture
+                        if move[4]:  # if there's at least one capture
                             capture_moves.append(move)
                         else:
                             all_moves.append(move)
 
         # If any capture moves are available, they must be taken
+
         if capture_moves:
             return capture_moves
         else:
@@ -123,60 +127,38 @@ class CheckersGame:
     def _get_piece_moves(self, r: int, c: int) -> List[Tuple[int, int, int, int, List[Tuple[int, int]]]]:
         """
         Generate all possible moves (including multi-jumps) for a single piece
-        at position (r, c). Returns a list of moves in the format:
-            (start_r, start_c, end_r, end_c, captured_positions).
+        at position (r, c). Returns a list of moves in the same format:
+        (start_r, start_c, end_r, end_c, captured_positions).
         """
         piece = self.get_piece(r, c)
         if piece == EMPTY:
             return []
 
-        # 1) First check for any capturing moves
-        capture_sequences = []
-        capture_directions = self._get_capture_directions(piece)
-        self._find_captures(
-            r, c, piece,
-            captured_so_far=[],
-            capture_sequences=capture_sequences,
-            directions=capture_directions,
-            origin=(r, c)
-        )
+        directions = []
+        if self.is_king(piece):
+            # King can move in all four diagonal directions
+            directions = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        else:
+            # Man: black moves down (+1), red moves up (-1)
+            move_dir = 1 if self.is_black_piece(piece) else -1
+            directions = [(move_dir, -1), (move_dir, 1)]
 
+        # Step 1: Check if any captures are available (multi-jumps included)
+        capture_sequences = []
+        self._find_captures(r, c, piece, [], capture_sequences, directions)
+
+        # If we found any capturing sequences, return them
         if capture_sequences:
-            # If we have captures, return those only
             return capture_sequences
 
-        # 2) Otherwise, return possible non-capturing moves (only forward if man, or all 4 if king)
+        # Otherwise, return non-capturing diagonal steps
         non_capture_moves = []
-        move_directions = self._get_normal_move_directions(piece)
-        for dr, dc in move_directions:
+        for dr, dc in directions:
             nr, nc = r + dr, c + dc
-            # Check in-bounds, same color square, and empty
-            if (self.in_bounds(nr, nc) and
-                (nr + nc) % 2 == (r + c) % 2 and
-                self.get_piece(nr, nc) == EMPTY):
+            if self.in_bounds(nr, nc) and self.get_piece(nr, nc) == EMPTY:
                 non_capture_moves.append((r, c, nr, nc, []))
 
         return non_capture_moves
-
-    def _get_normal_move_directions(self, piece: int) -> List[Tuple[int, int]]:
-        """
-        Return directions for a normal (non-capturing) move:
-            - If King, all 4 diagonals
-            - If Man, only forward diagonals
-        """
-        if self.is_king(piece):
-            return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-        else:
-            # Man can only move forward
-            return [(1, -1), (1, 1)] if self.is_black_piece(piece) else [(-1, -1), (-1, 1)]
-
-    def _get_capture_directions(self, piece: int) -> List[Tuple[int, int]]:
-        """
-        Return directions used for capturing:
-            - If King, all 4 diagonals
-            - If Man, all 4 diagonals as well (allow backward capture)
-        """
-        return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
 
     def _find_captures(
         self,
@@ -186,20 +168,16 @@ class CheckersGame:
         captured_so_far: List[Tuple[int, int]],
         capture_sequences: List[Tuple[int, int, int, int, List[Tuple[int, int]]]],
         directions: List[Tuple[int, int]],
-        origin: Optional[Tuple[int, int]] = None,
+        origin: Optional[Tuple[int, int]] = None
     ):
-        """
-        Recursive helper to find all multi-jump sequences from (r, c).
-        Prevents capturing the same square twice. Appends complete capture chains.
-        """
         if origin is None:
             origin = (r, c)
 
-        found_any_capture = False
+        found_capture = False
 
         for dr, dc in directions:
             middle_r, middle_c = r + dr, c + dc
-            landing_r, landing_c = r + 2 * dr, c + 2 * dc
+            landing_r, landing_c = r + 2*dr, c + 2*dc
 
             if not self.in_bounds(middle_r, middle_c) or not self.in_bounds(landing_r, landing_c):
                 continue
@@ -207,32 +185,20 @@ class CheckersGame:
             mid_piece = self.get_piece(middle_r, middle_c)
             land_piece = self.get_piece(landing_r, landing_c)
 
-            # 🚫 Prevent recapturing the same piece
-            if (middle_r, middle_c) in captured_so_far:
-                continue
+            if mid_piece != EMPTY and self.is_opponent(piece, mid_piece) and land_piece == EMPTY:
+                found_capture = True
 
-            if (
-                mid_piece != EMPTY and
-                self.is_opponent(piece, mid_piece) and
-                land_piece == EMPTY and
-                (landing_r + landing_c) % 2 == (r + c) % 2
-            ):
-                found_any_capture = True
-
+                # Simulate the capture
                 cloned_game = self.clone()
-
-                # Remove captured piece and move the current piece
                 cloned_game.set_piece(middle_r, middle_c, EMPTY)
-                cloned_game.set_piece(r, c, EMPTY)
                 cloned_game.set_piece(landing_r, landing_c, piece)
+                cloned_game.set_piece(r, c, EMPTY)
                 cloned_game._maybe_king(landing_r, landing_c)
 
-                # Update capture path
                 new_captures = captured_so_far + [(middle_r, middle_c)]
                 next_piece = cloned_game.get_piece(landing_r, landing_c)
-                next_dirs = cloned_game._get_capture_directions(next_piece)
+                next_dirs = cloned_game._get_move_directions(next_piece)
 
-                # Recursive call from new position
                 cloned_game._find_captures(
                     landing_r,
                     landing_c,
@@ -240,13 +206,23 @@ class CheckersGame:
                     new_captures,
                     capture_sequences,
                     next_dirs,
-                    origin,
+                    origin
                 )
 
-        if not found_any_capture and captured_so_far:
+        if not found_capture and captured_so_far:
             sr, sc = origin
             capture_sequences.append((sr, sc, r, c, captured_so_far))
 
+
+    def _get_move_directions(self, piece: int) -> List[Tuple[int, int]]:
+        """
+        Return the forward directions for a man, or all 4 directions for a king.
+        """
+        if self.is_king(piece):
+            return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        else:
+            move_dir = 1 if self.is_black_piece(piece) else -1
+            return [(move_dir, -1), (move_dir, 1)]
 
     def _maybe_king(self, r: int, c: int):
         """
@@ -258,11 +234,38 @@ class CheckersGame:
         elif self.is_red_piece(piece) and r == 0 and piece == RED_MAN:
             self.set_piece(r, c, RED_KING)
 
+    ''' 
     def make_move(self, move: Tuple[int, int, int, int, List[Tuple[int, int]]]) -> bool:
         """
         Execute a move on the board, including captures. Returns True if move is valid, else False.
         move format: (start_r, start_c, end_r, end_c, captured_positions).
         """
+        (r1, c1, r2, c2, captures) = move
+        piece = self.get_piece(r1, c1)
+        if piece == EMPTY:
+            return False
+
+        # Basic validation: end square must be empty
+        if self.get_piece(r2, c2) != EMPTY:
+            return False
+
+        # Move piece
+        self.set_piece(r1, c1, EMPTY)
+        self.set_piece(r2, c2, piece)
+        
+        # Remove captured pieces
+        for (cr, cc) in captures:
+            self.set_piece(cr, cc, EMPTY)
+
+        # Check if we should king the piece
+        self._maybe_king(r2, c2)
+
+        # Switch player
+        self.current_player = RED_MAN if self.current_player in (BLACK_MAN, BLACK_KING) else BLACK_MAN
+        return True
+    '''
+
+    def make_move(self, move: Tuple[int, int, int, int, List[Tuple[int, int]]]) -> bool:
         (r1, c1, r2, c2, captures) = move
         piece = self.get_piece(r1, c1)
 
@@ -289,44 +292,37 @@ class CheckersGame:
         self._maybe_king(r2, c2)
 
         # Switch player
-        if self.current_player in (BLACK_MAN, BLACK_KING):
-            self.current_player = RED_MAN
-        else:
-            self.current_player = BLACK_MAN
+        self.current_player = RED_MAN if self.current_player in (BLACK_MAN, BLACK_KING) else BLACK_MAN
 
         return True
 
     def is_game_over(self) -> bool:
         # 1) No legal moves
         if not self.get_legal_moves():
+            print("Game over: No legal moves.")
             return True
 
         # 2) One side has no pieces
         black_count = sum(self.is_black_piece(self.board[r][c]) for r in range(8) for c in range(8))
         red_count = sum(self.is_red_piece(self.board[r][c]) for r in range(8) for c in range(8))
         if black_count == 0 or red_count == 0:
+            print("Game over: One side has no pieces.")
             return True
 
         # 3) Too many consecutive non-capturing moves => draw
         if self.no_capture_count >= 40:
+            print(f"Game over: No captures for {self.no_capture_count} moves.")
             return True
 
         return False
 
     def get_winner(self) -> Optional[int]:
-        """
-        Returns:
-            +1 if Black wins,
-            -1 if Red wins,
-             0 if Draw,
-            None if the game is not over.
-        """
         if not self.is_game_over():
             return None
 
-        # If no moves available, the current player to move loses => other side wins
         moves = self.get_legal_moves()
         if not moves:
+            # The current player cannot move, so the other player wins
             return -self.get_current_player_sign()
 
         # Check piece counts
@@ -337,12 +333,13 @@ class CheckersGame:
         elif red_count == 0:
             return 1   # Black wins
 
-        # No-capture draw
+        # If we reached here, it might be the no-capture draw
         if self.no_capture_count >= 40:
             return 0  # draw
 
-        return 0  # fallback: treat other end-states as a draw if needed
-
+        # Fallback if you have other draw conditions
+        return 0
+    
     def print_board(self):
         """
         Display the board in a simple ASCII format.
@@ -364,7 +361,7 @@ class CheckersGame:
                     row_str.append(".")
             print(f"{r} " + " ".join(row_str))
         print()
-
+        
     def get_board_state(self):
         """
         Returns the board as a 2D list of integers, where:

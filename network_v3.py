@@ -121,36 +121,64 @@ def encode_board(game) -> torch.Tensor:
 
     return board_tensor
 
-def move_to_index(move: tuple, board_size=8) -> int:
+# move_registry.py
+
+from typing import List, Tuple
+
+# Global or per-game structures
+_MOVE_TO_IDX = {}
+_IDX_TO_MOVE = {}
+_NEXT_INDEX = 0
+_MAX_MOVES = 4096
+_CAPTURE_LIMIT = 6
+
+def reset_move_registry():
+    """Call this at the start of each self-play game."""
+    global _MOVE_TO_IDX, _IDX_TO_MOVE, _NEXT_INDEX
+    _MOVE_TO_IDX = {}
+    _IDX_TO_MOVE = {}
+    _NEXT_INDEX = 0
+
+def move_to_index(move: Tuple[int,int,int,int,List[Tuple[int,int]]], board_size=8) -> int:
     """
-    Map a move (r1, c1, r2, c2, captures) -> integer in [0, board_size^4).
-    Ignores the captures for indexing.
-    
-    Example:
-       index = r1*(8^3) + c1*(8^2) + r2*8 + c2
-    
-    :param move: (r1, c1, r2, c2, captures)
-    :param board_size: typically 8 for standard checkers
-    :return: integer index in [0, board_size^4)
+    Convert (r1, c1, r2, c2, captures) -> unique int in [0, 4096),
+    *without collisions*, by storing them in a global dictionary.
+
+    - If captures has more than 6 squares, truncate.
+    - If we exceed 4096 distinct moves in a single game, return 0 or some fallback.
     """
+    global _MOVE_TO_IDX, _IDX_TO_MOVE, _NEXT_INDEX
+
     (r1, c1, r2, c2, captures) = move
-    return r1*(board_size**3) + c1*(board_size**2) + r2*board_size + c2
+    if len(captures) > _CAPTURE_LIMIT:
+        captures = captures[:_CAPTURE_LIMIT]  # Truncate
 
-def index_to_move(index: int, board_size=8):
+    key = (r1, c1, r2, c2, tuple(captures))
+
+    if key in _MOVE_TO_IDX:
+        return _MOVE_TO_IDX[key]
+    else:
+        if _NEXT_INDEX >= _MAX_MOVES:
+            # We've run out of distinct move IDs in this game
+            return 0  # fallback index
+        _MOVE_TO_IDX[key] = _NEXT_INDEX
+        _IDX_TO_MOVE[_NEXT_INDEX] = key
+        _NEXT_INDEX += 1
+        return _MOVE_TO_IDX[key]
+
+def index_to_move(idx: int, board_size=8) -> Tuple[int,int,int,int,List[Tuple[int,int]]]:
     """
-    Reverse of move_to_index. (Assumes no captures in indexing.)
-    Returns (r1, c1, r2, c2, []).
+    Reverse-lookup the move from the global dictionary.
+    If idx not recognized, return some default no-op move.
     """
-    r1 = index // (board_size**3)
-    remain = index % (board_size**3)
+    global _MOVE_TO_IDX, _IDX_TO_MOVE, _NEXT_INDEX
 
-    c1 = remain // (board_size**2)
-    remain = remain % (board_size**2)
+    if idx not in _IDX_TO_MOVE:
+        # Fallback if unknown index
+        return (0,0,0,0,[])
+    (r1, c1, r2, c2, captures) = _IDX_TO_MOVE[idx]
+    return (r1, c1, r2, c2, list(captures))
 
-    r2 = remain // board_size
-    c2 = remain % board_size
-
-    return (r1, c1, r2, c2, [])
 
 
 if __name__ == "__main__":
