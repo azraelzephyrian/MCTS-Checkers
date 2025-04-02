@@ -174,9 +174,14 @@ class CheckersGame:
         """
         Return directions used for capturing:
             - If King, all 4 diagonals
-            - If Man, all 4 diagonals as well (allow backward capture)
+            - If Man, only forward diagonals
         """
-        return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        if self.is_king(piece):
+            return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        else:
+            # Man can only capture forward diagonally
+            return [(1, -1), (1, 1)] if self.is_black_piece(piece) else [(-1, -1), (-1, 1)]
+
 
     def _find_captures(
         self,
@@ -246,6 +251,7 @@ class CheckersGame:
         if not found_any_capture and captured_so_far:
             sr, sc = origin
             capture_sequences.append((sr, sc, r, c, captured_so_far))
+
 
 
     def _maybe_king(self, r: int, c: int):
