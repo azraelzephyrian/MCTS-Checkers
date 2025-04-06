@@ -37,13 +37,13 @@ class CheckersGame:
         for r in range(3):
             for c in range(8):
                 if (r + c) % 2 == 0:
-                    self.board[r][c] = BLACK_MAN
+                    self.board[r][c] = RED_MAN  # Red at the top
 
-        # Place 12 red pieces on "dark" squares (r + c even) in rows 5..7
         for r in range(5, 8):
             for c in range(8):
                 if (r + c) % 2 == 0:
-                    self.board[r][c] = RED_MAN
+                    self.board[r][c] = BLACK_MAN  # Black at the bottom
+
 
     def clone(self) -> 'CheckersGame':
         """
@@ -168,7 +168,7 @@ class CheckersGame:
             return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
         else:
             # Man can only move forward
-            return [(1, -1), (1, 1)] if self.is_black_piece(piece) else [(-1, -1), (-1, 1)]
+            return [(-1, -1), (-1, 1)] if self.is_black_piece(piece) else [(1, -1), (1, 1)]
 
     def _get_capture_directions(self, piece: int) -> List[Tuple[int, int]]:
         """
@@ -180,7 +180,8 @@ class CheckersGame:
             return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
         else:
             # Man can only capture forward diagonally
-            return [(1, -1), (1, 1)] if self.is_black_piece(piece) else [(-1, -1), (-1, 1)]
+            return [(-1, -1), (-1, 1)] if self.is_black_piece(piece) else [(1, -1), (1, 1)]
+
 
 
     def _find_captures(
@@ -294,13 +295,14 @@ class CheckersGame:
         # Possibly king the piece
         self._maybe_king(r2, c2)
 
-        # Switch player
+        # Switch player after a successful move
         if self.current_player in (BLACK_MAN, BLACK_KING):
             self.current_player = RED_MAN
         else:
             self.current_player = BLACK_MAN
 
         return True
+
 
     def is_game_over(self) -> bool:
         # 1) No legal moves
