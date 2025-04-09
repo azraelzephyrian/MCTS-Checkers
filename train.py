@@ -128,7 +128,7 @@ def alpha_zero_train_step(net, optimizer, batch, reg_const=1e-4):
     # Convert logits -> log probs
     log_policy = F.log_softmax(policy_logits, dim=1)  # [B, action_size]
 
-    # Value loss = MSE( z, v )
+    # Value loss = MSE( z, v ) (Outputs range from -1 to 1; 0 is a draw)
     value_loss = F.mse_loss(value_pred, z_batch)
 
     # Policy loss = - pi^T * log_policy => cross-entropy

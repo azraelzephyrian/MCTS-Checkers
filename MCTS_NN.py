@@ -184,7 +184,7 @@ class MCTS_NN:
                 q = child.total_value / child.visit_count  # average value
 
             if explore:
-                # PUCT formula
+                # PUCT formula PUCT(s, a) = Q(s, a) + c_puct * P(s, a) * sqrt(N(s)) / (1 + N(s, a))
                 u = self.c_puct * child.policy_prior * (math.sqrt(sum_visits) / (1 + child.visit_count))
                 score = q + u
             else:
