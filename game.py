@@ -1,10 +1,72 @@
 from typing import List, Tuple, Optional
-
+import torch
 EMPTY = 0
 BLACK_MAN = 1
 BLACK_KING = 2
 RED_MAN = -1
 RED_KING = -2
+
+def encode_board(game) -> torch.Tensor:
+    board = game.board  # assume shape [8][8]
+    tensor = torch.zeros(5, 8, 8, dtype=torch.float32)
+
+    for r in range(8):
+        for c in range(8):
+            piece = board[r][c]
+            if piece == BLACK_MAN:
+                tensor[0, r, c] = 1
+            elif piece == RED_MAN:
+                tensor[1, r, c] = 1
+            elif piece == BLACK_KING:
+                tensor[2, r, c] = 1
+            elif piece == RED_KING:
+                tensor[3, r, c] = 1
+
+    # Plane 5: Current player (1 if black's turn, 0 if red's)
+    player_plane = 1.0 if game.current_player > 0 else 0.0
+    tensor[4] = player_plane  # broadcast over 8x8
+
+    return tensor
+
+
+class MoveEncoder:
+    def __init__(self):
+        self.path_to_id = {}
+        self.id_to_path = []
+
+    def encode(self, path: List[Tuple[int, int]]) -> int:
+        key = tuple(path)
+        if key not in self.path_to_id:
+            idx = len(self.id_to_path)
+            self.path_to_id[key] = idx
+            self.id_to_path.append(key)
+        return self.path_to_id[key]
+
+    def decode(self, idx: int) -> List[Tuple[int, int]]:
+        if idx >= len(self.id_to_path):
+            print(f"[Decode Error] Index {idx} out of bounds")
+            return None
+        path = self.id_to_path[idx]
+        if not path:
+            print(f"[Decode Error] ID {idx} maps to empty path")
+            return None
+        return list(path)
+
+    def rebuild_from_paths(self, paths: List[List[Tuple[int, int]]]):
+        self.path_to_id.clear()
+        self.id_to_path.clear()
+        for path in paths:
+            if not path or any(p is None or len(p) != 2 for p in path):
+                print(f"[Encoder Skip] Invalid path: {path}")
+                continue
+            self.encode(path)
+
+    def __len__(self):
+        return len(self.id_to_path)
+
+
+
+
 
 class CheckersGame:
     """
@@ -95,19 +157,18 @@ class CheckersGame:
         Returns a list of legal moves in the form:
             (start_row, start_col, end_row, end_col, captured_positions)
 
-        Where captured_positions is a list of (r, c) squares of opponent pieces captured.
-
-        Moves can be normal single-step moves or capturing jumps (possibly multiple).
-        In checkers, capturing is mandatory, so if captures exist, we only return capture moves.
+        Includes multi-jump capture sequences. If any captures are available, non-capture
+        moves are suppressed (mandatory capture rule). Automatically rebuilds encoder.
         """
         sign = self.get_current_player_sign()
-
         all_moves = []
         capture_moves = []
+        all_paths = []  # For encoder
 
         for r in range(8):
             for c in range(8):
                 piece = self.get_piece(r, c)
+<<<<<<< Updated upstream
                 if piece != EMPTY and (sign > 0) == self.is_black_piece(piece):
                     # Generate possible moves for this piece
                     piece_moves = self._get_piece_moves(r, c)
@@ -116,12 +177,105 @@ class CheckersGame:
                             capture_moves.append(move)
                         else:
                             all_moves.append(move)
+=======
+                if piece != EMPTY and ((sign > 0) == self.is_black_piece(piece)):
+                    # Get all jump paths recursively
+                    jump_paths = self._get_all_jump_paths(r, c)
+                    for path, captures in jump_paths:
+                        start = path[0]
+                        end = path[-1]
+                        capture_moves.append((start[0], start[1], end[0], end[1], captures))
+                        all_paths.append(path)
+>>>>>>> Stashed changes
 
-        # If any capture moves are available, they must be taken
-        if capture_moves:
-            return capture_moves
-        else:
-            return all_moves
+                    # Only add single steps if no captures found
+                    if not jump_paths:
+                        steps = self._get_simple_moves(r, c)
+                        for (nr, nc) in steps:
+                            move = (r, c, nr, nc, [])
+                            all_moves.append(move)
+                            all_paths.append([(r, c), (nr, nc)])
+
+        return capture_moves if capture_moves else all_moves
+    
+    def _get_piece_directions(self, piece):
+        if piece == BLACK_MAN:
+            return [(-1, -1), (-1, 1)]
+        elif piece == RED_MAN:
+            return [(1, -1), (1, 1)]
+        else:  # King
+            return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        
+    def is_opponent_piece(self, piece: int, reference_piece: int) -> bool:
+        """
+        Returns True if `piece` is the opponent of `reference_piece`.
+        """
+        if piece == EMPTY:
+            return False
+        return self.is_black_piece(piece) != self.is_black_piece(reference_piece)
+
+
+    def _get_all_jump_paths(self, r: int, c: int) -> List[Tuple[List[Tuple[int, int]], List[Tuple[int, int]]]]:
+        """
+        Returns all full jump paths starting from (r, c).
+        Each path is a tuple: (move_path, captures)
+        - move_path: list of visited squares, including start and final
+        - captures: list of (r, c) positions of captured opponent pieces
+        """
+        piece = self.get_piece(r, c)
+        directions = self._get_capture_directions(piece)
+
+        results = []
+
+        def dfs(curr_r, curr_c, path, captured):
+            found = False
+
+            for dr, dc in directions:
+                mid_r, mid_c = curr_r + dr, curr_c + dc
+                land_r, land_c = curr_r + 2 * dr, curr_c + 2 * dc
+
+                if not self.in_bounds(mid_r, mid_c) or not self.in_bounds(land_r, land_c):
+                    continue
+
+                mid_piece = self.get_piece(mid_r, mid_c)
+                land_piece = self.get_piece(land_r, land_c)
+
+                if (mid_r, mid_c) in captured:
+                    continue
+
+                if self.is_opponent(piece, mid_piece) and land_piece == EMPTY:
+                    # Clone the board to simulate move
+                    clone = self.clone()
+                    clone.set_piece(mid_r, mid_c, EMPTY)
+                    clone.set_piece(curr_r, curr_c, EMPTY)
+                    clone.set_piece(land_r, land_c, piece)
+                    clone._maybe_king(land_r, land_c)
+
+                    new_path = path + [(land_r, land_c)]
+                    new_captures = captured + [(mid_r, mid_c)]
+                    found = True
+                    # Recurse from new position
+                    clone._get_all_jump_paths_dfs(land_r, land_c, piece, new_path, new_captures, results)
+
+            if not found and captured:
+                results.append((path, captured))
+
+        # DFS wrapper lives here now
+        self._get_all_jump_paths_dfs = dfs
+        dfs(r, c, [(r, c)], [])
+
+        return results
+
+    
+    def _get_simple_moves(self, r, c):
+        moves = []
+        piece = self.get_piece(r, c)
+        directions = self._get_piece_directions(piece)
+        for dr, dc in directions:
+            nr, nc = r + dr, c + dc
+            if self.in_bounds(nr, nc) and self.get_piece(nr, nc) == EMPTY:
+                moves.append((nr, nc))
+        return moves
 
     def _get_piece_moves(self, r: int, c: int) -> List[Tuple[int, int, int, int, List[Tuple[int, int]]]]:
         """
@@ -386,4 +540,39 @@ class CheckersGame:
                 else:
                     row_str.append(".")
             print(f"{r} " + " ".join(row_str))
+<<<<<<< Updated upstream
         print()
+=======
+        print()
+
+    def get_full_move_paths(self) -> List[List[Tuple[int, int]]]:
+        """
+        Returns each legal move as a full path of board coordinates.
+        """
+        raw_moves = self.get_legal_moves()
+        full_paths = []
+        for (start_r, start_c, end_r, end_c, captures) in raw_moves:
+            # If multi-jump, reconstruct full path via captures
+            if captures:
+                # Approximate full path: (start) + capture midpoints + (end)
+                path = [(start_r, start_c)]
+                for cr, cc in captures:
+                    path.append((cr, cc))  # (Not exact jump landing!)
+                path.append((end_r, end_c))
+            else:
+                path = [(start_r, start_c), (end_r, end_c)]
+            full_paths.append(path)
+        return full_paths
+
+
+    def get_board_state(self):
+        """
+        Returns the board as a 2D list of integers, where:
+        - 0 = empty
+        - 1 = black man
+        - 2 = black king
+        - -1 = red man
+        - -2 = red king
+        """
+        return [row[:] for row in self.board]
+>>>>>>> Stashed changes

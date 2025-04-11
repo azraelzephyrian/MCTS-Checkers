@@ -9,11 +9,59 @@ from network_v1 import CheckersNet, encode_board, move_to_index, index_to_move
 # from game import CheckersGame     # Your checkers environment
 # from network import CheckersNet, encode_board, move_to_index, index_to_move
 
+
+
+
+
+
 EMPTY = 0
 BLACK_MAN = 1
 BLACK_KING = 2
 RED_MAN = -1
 RED_KING = -2
+
+def apply_move_path(game, path):
+    """
+    Applies a full move path (including multi-jumps) to the game object.
+    Returns True if successful, False if illegal.
+    """
+    if path is None or len(path) < 2:
+        return False
+
+    for i in range(len(path) - 1):
+        r1, c1 = path[i]
+        r2, c2 = path[i + 1]
+        mid_r = (r1 + r2) // 2
+        mid_c = (c1 + c2) // 2
+        dr, dc = r2 - r1, c2 - c1
+
+        piece = game.get_piece(r1, c1)
+
+        # Regular move
+        if abs(dr) == 1 and abs(dc) == 1:
+            if game.get_piece(r2, c2) != EMPTY:
+                return False
+            game.set_piece(r2, c2, piece)
+            game.set_piece(r1, c1, EMPTY)
+
+        # Jump move
+        elif abs(dr) == 2 and abs(dc) == 2:
+            mid_piece = game.get_piece(mid_r, mid_c)
+            if not game.is_opponent(piece, mid_piece):
+                return False
+            if game.get_piece(r2, c2) != EMPTY:
+                return False
+            game.set_piece(r2, c2, piece)
+            game.set_piece(r1, c1, EMPTY)
+            game.set_piece(mid_r, mid_c, EMPTY)
+
+        else:
+            return False
+
+        game._maybe_king(r2, c2)
+
+    game.switch_player()
+    return True
 
 class Node:
     """
@@ -30,10 +78,7 @@ class Node:
     def __init__(self, state, parent=None):
         self.state = state
         self.parent = parent
-        self.children: Dict[
-            Tuple[int, int, int, int, Tuple[Tuple[int,int], ...]],
-            "Node"
-        ] = {}
+        self.children: Dict[int, "Node"] = {}  # ✅ children keyed by action_id
         self.visit_count = 0
         self.total_value = 0.0
         self.policy_prior = 0.0
@@ -58,7 +103,7 @@ class MCTS_NN:
     (position evaluation). We use a PUCT-like formula for selection.
     """
 
-    def __init__(self, net, c_puct: float = 1.0, action_size: int = 128):
+    def __init__(self, net, encoder, c_puct: float = 1.0):
         """
         :param net: A PyTorch model with signature: net(board_input) -> (policy_logits, value)
                     - policy_logits shape: (batch_size, action_size)
@@ -66,28 +111,24 @@ class MCTS_NN:
         :param c_puct: Exploration constant in the PUCT formula.
         :param action_size: The size of the policy output (e.g., 128 or 4096).
         """
+        self.encoder = encoder
         self.net = net
         self.c_puct = c_puct
-        self.action_size = action_size
+        self.action_size = len(encoder)
 
-    def search(self, root: Node, n_simulations: int = 800) -> Tuple[int, int, int, int, List[Tuple[int,int]]]:
-        """
-        Perform MCTS from the given 'root' node, for 'n_simulations' iterations.
-        After that, return the move leading to the most visited child node.
-        """
+    def search(self, root: Node, encoder, n_simulations: int = 800) -> int:
         for _ in range(n_simulations):
-            node = self._select(root)
+            node = self._select(root, encoder)  # ✅ CORRECT ORDER
+
             if not node.state.is_game_over():
-                self._expand(node)
-            # No random rollout. The value is from node.value_est (assigned in expand).
-            # We interpret node.value_est from the perspective of the node's current player or root.
+                self._expand(node, encoder)
             self._backpropagate(node, node.value_est)
 
-        # Choose the child with the highest visit count for the final move.
-        best_move, best_child = self._best_child(root, explore=False)
-        return best_move
+        best_action_id, _ = self._best_child(root, explore=False)
+        return best_action_id  # ✅ return action_id instead of move
 
-    def _select(self, node: Node) -> Node:
+    def _select(self, node: Node, encoder) -> Node:
+
         """
         Selection phase: descend the tree by choosing child nodes with the highest PUCT,
         until we reach a leaf node or a terminal state.
@@ -96,57 +137,55 @@ class MCTS_NN:
             move, node = self._best_child(node, explore=True)
         return node
 
-    def _expand(self, node: Node):
-        """
-        Expand the node by:
-        1) Calling the neural net to get (policy_logits, value_est).
-        2) Masking invalid moves to get a distribution over legal moves.
-        3) Creating child nodes for each legal move, storing policy_prior in each child.
-        4) Storing the node's own value_est from the NN for later backpropagation.
-        """
-        # 1) Encode the board state into a tensor
-        board_input = encode_board(node.state).unsqueeze(0)  # shape (1, 4, 8, 8) for example
-        # Move to the same device as the net
-        board_input = board_input.to(next(self.net.parameters()).device)
+    def _expand(self, node, encoder):
+        board_input = encode_board(node.state).unsqueeze(0).to(next(self.net.parameters()).device)
 
-        # 2) Forward pass
         with torch.no_grad():
-            policy_logits, value_est = self.net(board_input)  # shapes: (1, action_size), (1, 1)
+            policy_logits, value_est = self.net(board_input)
 
-        # Extract from batch dimension
-        policy_logits = policy_logits[0]  # shape (action_size,)
-        node.value_est = value_est.item() # a single scalar in [-1, +1]
+        policy_logits = policy_logits[0]
+        node.value_est = value_est.item()
 
-        # 3) Gather legal moves
-        legal_moves = node.state.get_legal_moves()  # e.g. list of (r1, c1, r2, c2, captures)
-        if not legal_moves:
-            # No moves => terminal. Usually we do nothing. Node is a leaf.
+        legal_moves = node.state.get_legal_moves()
+        move_paths = []
+        for move in legal_moves:
+            r1, c1, r2, c2, captures = move
+            path = [(r1, c1)] + captures + [(r2, c2)] if captures else [(r1, c1), (r2, c2)]
+            move_paths.append(path)
+
+        legal_ids = [encoder.encode(path) for path in move_paths]
+
+        mask = torch.full_like(policy_logits, float('-inf'))
+        valid_ids = [idx for idx in legal_ids if 0 <= idx < policy_logits.shape[0]]
+        if not valid_ids:
+            print("[Warning] No valid actions in policy head for this board state.")
             return
 
-        # Convert each move to an index
-        legal_indices = [move_to_index(m) for m in legal_moves]  # each index is in [0, action_size)
-        
-        # 4) Mask invalid moves => build a mask tensor
-        mask = torch.full_like(policy_logits, float('-inf'))  # same shape as policy_logits
-        for idx in legal_indices:
-            mask[idx] = 0.0  # valid move => 0, invalid => -inf
+        if not valid_ids:
+            return  # ✅ Skip expansion — no valid actions in this node
+
+        mask = torch.full_like(policy_logits, float('-inf'))
+        for idx in valid_ids:
+            mask[idx] = 0.0
 
         masked_logits = policy_logits + mask
-        policy_probs = F.softmax(masked_logits, dim=0)  # shape (action_size,)
+        policy_probs = F.softmax(masked_logits, dim=0)
 
-        # 5) Create child nodes for each legal move, storing policy_prior
-        for move, idx in zip(legal_moves, legal_indices):
-            p = policy_probs[idx].item()
-            # Clone game state for the child
+
+        masked_logits = policy_logits + mask
+        policy_probs = F.softmax(masked_logits, dim=0)
+
+        for path, action_id in zip(move_paths, legal_ids):
+            if action_id not in valid_ids:
+                continue  # skip out-of-bounds actions
             new_state = node.state.clone()
-            new_state.make_move(move)
+            if not apply_move_path(new_state, path):
+                continue
             child_node = Node(state=new_state, parent=node)
-            child_node.policy_prior = p
+            child_node.policy_prior = policy_probs[action_id].item()
+            node.children[action_id] = child_node
 
-            # Move must be hashable to store as a dict key:
-            # (r1,c1,r2,c2, tuple_of_captures)
-            move_key = (move[0], move[1], move[2], move[3], tuple(move[4]))
-            node.children[move_key] = child_node
+
 
     def _backpropagate(self, node: Node, value: float):
         """
@@ -164,36 +203,29 @@ class MCTS_NN:
             # sign = -sign
             current = current.parent
 
-    def _best_child(self, node: Node, explore: bool) -> Tuple[
-                    Tuple[int, int, int, int, Tuple[Tuple[int,int], ...]], Node]:
-        """
-        Return (move, child_node) with the highest PUCT if explore=True,
-        or highest visit_count if explore=False.
-        """
-        best_move = None
+    def _best_child(self, node: Node, explore: bool) -> Tuple[int, Node]:
+        best_id = None
         best_node = None
         best_score = float('-inf')
 
-        # sum_child_visits is needed for PUCT
         sum_visits = sum(child.visit_count for child in node.children.values()) + 1e-8
 
-        for move, child in node.children.items():
-            if child.visit_count == 0:
-                q = 0.0
-            else:
-                q = child.total_value / child.visit_count  # average value
-
+        for action_id, child in node.children.items():
+            q = child.total_value / child.visit_count if child.visit_count > 0 else 0.0
             if explore:
+<<<<<<< Updated upstream
                 # PUCT formula
                 u = self.c_puct * child.policy_prior * (math.sqrt(sum_visits) / (1 + child.visit_count))
+=======
+                u = self.c_puct * child.policy_prior * math.sqrt(sum_visits) / (1 + child.visit_count)
+>>>>>>> Stashed changes
                 score = q + u
             else:
-                # For final move selection, pick the child with highest visit_count
                 score = child.visit_count
 
             if score > best_score:
                 best_score = score
-                best_move = move
+                best_id = action_id
                 best_node = child
 
-        return best_move, best_node
+        return best_id, best_node
