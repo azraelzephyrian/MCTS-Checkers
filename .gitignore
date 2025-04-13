@@ -1,0 +1,51 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE specific files
+.idea/
+*.iml
+.vscode/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTorch specific
+*.pth
+*.pt
+*.bin
+
+# Project specific
+replay_buffer_*.pth
+model_iter_*.pth
+# If you want to track specific model files, use git add -f filename.pth
+
+# Logs and outputs
+*.log
+outputs/
+logs/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Flask
+instance/
+.webassets-cache
+
+# Debug files
+debug/

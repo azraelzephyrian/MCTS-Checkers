@@ -260,9 +260,9 @@ class CheckersGame:
         If a man has reached the opposite side, make it a king.
         """
         piece = self.get_piece(r, c)
-        if self.is_black_piece(piece) and r == 7 and piece == BLACK_MAN:
+        if self.is_black_piece(piece) and r == 0 and piece == BLACK_MAN:
             self.set_piece(r, c, BLACK_KING)
-        elif self.is_red_piece(piece) and r == 0 and piece == RED_MAN:
+        elif self.is_red_piece(piece) and r == 7 and piece == RED_MAN:
             self.set_piece(r, c, RED_KING)
 
     def make_move(self, move: Tuple[int, int, int, int, List[Tuple[int, int]]]) -> bool:

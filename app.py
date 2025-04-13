@@ -65,4 +65,5 @@ def status():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    debug_mode = True
+    app.run(host="0.0.0.0", debug=debug_mode, port=5000, use_reloader=False)
